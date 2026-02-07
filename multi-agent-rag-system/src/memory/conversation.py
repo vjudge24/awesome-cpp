@@ -8,9 +8,9 @@ import json
 import time
 
 import structlog
-import tiktoken
 
 from src.config import settings
+from src.tokenizer import count_tokens
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +37,6 @@ class ConversationMemory:
         self._max_turns = max_turns
         self._max_tokens = max_tokens
         self._ttl = ttl_seconds
-        self._enc = tiktoken.encoding_for_model("gpt-4o")
         self._redis = None
         self._local_store: list[dict[str, str]] = []
 
@@ -77,7 +76,7 @@ class ConversationMemory:
         token_count = 0
 
         for msg in reversed(messages):
-            msg_tokens = len(self._enc.encode(msg["content"]))
+            msg_tokens = count_tokens(msg["content"])
             if token_count + msg_tokens > self._max_tokens:
                 break
             result.insert(0, {"role": msg["role"], "content": msg["content"]})
@@ -96,7 +95,7 @@ class ConversationMemory:
     def get_summary(self) -> dict[str, int]:
         """Get memory usage statistics."""
         messages = self._load_messages()
-        total_tokens = sum(len(self._enc.encode(m["content"])) for m in messages)
+        total_tokens = sum(count_tokens(m["content"]) for m in messages)
         return {
             "session_id_hash": hash(self._session_id) % 10000,
             "message_count": len(messages),

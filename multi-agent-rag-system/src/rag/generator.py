@@ -1,8 +1,9 @@
 """Response generation with context injection and token management."""
 
-import tiktoken
 import structlog
 from openai import AzureOpenAI
+
+from src.tokenizer import count_tokens
 
 from src.config import settings
 from src.rag.retriever import RetrievedDocument
@@ -47,7 +48,6 @@ class ResponseGenerator:
         )
         self._deployment = deployment
         self._max_context_tokens = max_context_tokens
-        self._enc = tiktoken.encoding_for_model("gpt-4o")
 
     def generate(
         self,
@@ -70,7 +70,7 @@ class ResponseGenerator:
 
         messages.append({"role": "user", "content": user_content})
 
-        total_tokens = sum(len(self._enc.encode(m["content"])) for m in messages)
+        total_tokens = sum(count_tokens(m["content"]) for m in messages)
         logger.info(
             "generation_request",
             question_len=len(question),
@@ -105,7 +105,7 @@ class ResponseGenerator:
 
         for i, doc in enumerate(documents):
             entry = f"[Source: {doc.source} | Chunk: {doc.chunk_index}]\n{doc.content}\n"
-            entry_tokens = len(self._enc.encode(entry))
+            entry_tokens = count_tokens(entry)
 
             if current_tokens + entry_tokens > token_budget:
                 logger.info("context_truncated", included=i, total=len(documents))

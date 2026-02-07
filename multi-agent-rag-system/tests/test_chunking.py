@@ -16,7 +16,7 @@ class TestRecursiveChunker:
         assert chunks[0].metadata["strategy"] == "recursive"
 
     def test_paragraph_splitting(self):
-        chunker = RecursiveChunker(chunk_size=50, chunk_overlap=0)
+        chunker = RecursiveChunker(chunk_size=8, chunk_overlap=0)
         text = "First paragraph about topic A.\n\nSecond paragraph about topic B."
         chunks = chunker.chunk(text)
 

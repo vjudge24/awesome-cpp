@@ -5,11 +5,11 @@ Each strategy produces chunks with metadata for traceability.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import tiktoken
-
 from src.config import settings
+from src.tokenizer import count_tokens, encode, decode
 
 
 @dataclass
@@ -22,8 +22,7 @@ class Chunk:
 
     def __post_init__(self) -> None:
         if self.token_count == 0:
-            enc = tiktoken.encoding_for_model("gpt-4o")
-            self.token_count = len(enc.encode(self.content))
+            self.token_count = count_tokens(self.content)
 
 
 class ChunkingStrategy(ABC):
@@ -51,10 +50,9 @@ class RecursiveChunker(ChunkingStrategy):
     ) -> None:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self._enc = tiktoken.encoding_for_model("gpt-4o")
 
     def _token_len(self, text: str) -> int:
-        return len(self._enc.encode(text))
+        return count_tokens(text)
 
     def _split_text(self, text: str, separators: list[str]) -> list[str]:
         if not separators:
@@ -107,9 +105,9 @@ class RecursiveChunker(ChunkingStrategy):
 
         result: list[str] = [chunks[0]]
         for i in range(1, len(chunks)):
-            prev_tokens = self._enc.encode(chunks[i - 1])
+            prev_tokens = encode(chunks[i - 1])
             overlap_tokens = prev_tokens[-self.chunk_overlap :]
-            overlap_text = self._enc.decode(overlap_tokens)
+            overlap_text = decode(overlap_tokens)
             result.append(overlap_text + chunks[i])
         return result
 
@@ -137,14 +135,13 @@ class SemanticChunker(ChunkingStrategy):
 
     def __init__(
         self,
-        embedding_fn: callable | None = None,
+        embedding_fn: Callable[[str], list[float]] | None = None,
         breakpoint_threshold: float = 0.3,
         max_chunk_tokens: int = settings.chunk_size,
     ) -> None:
         self._embed = embedding_fn
         self.threshold = breakpoint_threshold
         self.max_tokens = max_chunk_tokens
-        self._enc = tiktoken.encoding_for_model("gpt-4o")
 
     @staticmethod
     def _cosine_distance(a: list[float], b: list[float]) -> float:
@@ -176,7 +173,7 @@ class SemanticChunker(ChunkingStrategy):
         for i in range(1, len(sentences)):
             dist = self._cosine_distance(embeddings[i - 1], embeddings[i])
             current_group_text = " ".join(groups[-1] + [sentences[i]])
-            token_count = len(self._enc.encode(current_group_text))
+            token_count = count_tokens(current_group_text)
 
             if dist > self.threshold or token_count > self.max_tokens:
                 groups.append([sentences[i]])

@@ -54,7 +54,7 @@ class HybridRetriever:
         vector_results = self._vector_search(query, filter_expr)
         keyword_results = self._keyword_search(query, filter_expr)
 
-        merged = self._rrf_merge(vector_results, keyword_results)
+        merged = self._rrf_merge(vector_results, keyword_results, rrf_k=self.RRF_K)
 
         # Return top N after re-ranking
         top_results = merged[: self._rerank_top_n]
@@ -117,9 +117,10 @@ class HybridRetriever:
             for r in results
         ]
 
+    @staticmethod
     def _rrf_merge(
-        self,
         *result_sets: list[RetrievedDocument],
+        rrf_k: int = 60,
     ) -> list[RetrievedDocument]:
         """Merge multiple result sets using Reciprocal Rank Fusion.
 
@@ -133,7 +134,7 @@ class HybridRetriever:
         for results in result_sets:
             for rank, doc in enumerate(results, start=1):
                 key = f"{doc.source}_{doc.chunk_index}"
-                rrf_score = 1.0 / (self.RRF_K + rank)
+                rrf_score = 1.0 / (rrf_k + rank)
                 doc_scores[key] = doc_scores.get(key, 0.0) + rrf_score
                 if key not in doc_map:
                     doc_map[key] = doc
