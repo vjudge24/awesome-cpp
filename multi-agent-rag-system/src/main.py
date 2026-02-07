@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.agents.graph import AgentState, build_graph
@@ -53,6 +54,7 @@ class QueryRequest(BaseModel):
     question: str
     session_id: str | None = None
     filter_source: str | None = None
+    stream: bool = False
 
 
 class QueryResponse(BaseModel):
@@ -164,6 +166,76 @@ async def ingest(request: IngestRequest):
 async def get_metrics():
     """Return aggregated performance metrics."""
     return metrics_aggregator.get_summary()
+
+
+@app.post("/query/stream")
+async def query_stream(request: QueryRequest):
+    """Stream a RAG response as Server-Sent Events (SSE).
+
+    Returns token-by-token SSE events:
+      data: {"type": "token", "content": "..."}
+      data: {"type": "sources", "content": [...]}
+      data: {"type": "metrics", "content": {...}}
+      data: {"type": "done", "content": null}
+    """
+    from src.streaming import stream_rag_response
+    from src.rag.embeddings import EmbeddingService
+    from src.rag.retriever import HybridRetriever
+
+    session_id = request.session_id or str(uuid.uuid4())
+    memory = ConversationMemory(session_id=session_id)
+    history = memory.get_history()
+
+    # Retrieve context
+    embedding_svc = EmbeddingService()
+    retriever = HybridRetriever(embedding_service=embedding_svc)
+    docs = retriever.retrieve(request.question)
+    sources = list({doc.source for doc in docs})
+    context = "\n---\n".join(
+        f"[Source: {d.source}]\n{d.content}" for d in docs
+    )
+
+    return StreamingResponse(
+        stream_rag_response(
+            question=request.question,
+            context=context,
+            sources=sources,
+            conversation_history=history,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/prompts")
+async def list_prompts():
+    """List all registered prompt versions."""
+    from src.prompts.registry import get_default_registry
+
+    registry = get_default_registry()
+    result = {}
+    for name, latest_version in registry.list_prompts().items():
+        result[name] = {
+            "latest_version": latest_version,
+            "all_versions": registry.list_versions(name),
+        }
+    return result
+
+
+@app.get("/prompts/{name}")
+async def get_prompt(name: str, version: str | None = None):
+    """Get a specific prompt by name and optional version."""
+    from src.prompts.registry import get_default_registry
+
+    registry = get_default_registry()
+    try:
+        prompt = registry.get(name, version=version)
+        return prompt.to_dict()
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.delete("/session/{session_id}")
